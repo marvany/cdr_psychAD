@@ -15,15 +15,10 @@ outwrite2 <- function(x,filename){fwrite(x,file.path("results/processed2", filen
 
 
 
-bcmarks = read_excel('/sc/arion/projects/va-biobank/PROJECTS/cdr.comparative.efficacy.marios/Resources/benchmark_drugs.xlsx')
-bc = as.data.table(bcmarks)
-ad.bc = bc[comb_indication == 'AD']
-adbc = ad.bc$pert_iname
-
-
 # Load the results
 results_path <- "results/drug_pheno_assoc_anal_psychAD.csv"
 dt <- fread(results_path)
+outdir = "results/processed2"
 
 # Remove NA values in Estimate column
 dt <- dt[!is.na(Estimate)]
@@ -89,7 +84,7 @@ p1 <- ggplot(phenotype_counts_filtered, aes(x = phenotype, y = N)) +
   )
 
 # Save plot
-ggsave("fdr_significant_compounds_per_phenotype.pdf", p1, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25))
+ggsave(file.path(outdir, "fdr_significant_compounds_per_phenotype.pdf"), p1, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25), limitsize = F)
 
 # ============= 3. Create percentage bar plot =============
 
@@ -111,7 +106,7 @@ p2 <- ggplot(phenotype_counts_filtered, aes(x = phenotype, y = percentage)) +
   )
 
 # Save plot
-ggsave("percentage_fdr_significant_compounds_per_phenotype.pdf", p2, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25))
+ggsave(file.path(outdir,"percentage_fdr_significant_compounds_per_phenotype.pdf"), p2, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25), limitsize = F)
 
 # ============= 4. Create bubble plot =============
 
@@ -135,7 +130,7 @@ p3 <- ggplot(phenotype_counts_filtered,
   )
 
 # Save plot
-ggsave("bubble_fdr_significant_compounds_per_phenotype.pdf", p3, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25))
+ggsave(file.path(outdir,"bubble_fdr_significant_compounds_per_phenotype.pdf"), p3, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25), limitsize = F)
 
 # ============= 5. Extract the top compounds for the top phenotypes =============
 
@@ -158,7 +153,7 @@ for (pheno in top_phenotypes) {
 top_compounds_df <- rbindlist(top_compounds_list)
 
 # Create a summary table
-write.csv(top_compounds_df, "top_compounds_for_top_phenotypes.csv", row.names = FALSE)
+outwrite2(top_compounds_df, "top_compounds_for_top_phenotypes.csv")
 
 # ============= 6. Create a heat tile plot for phenotype-analysis combinations =============
 
@@ -200,13 +195,13 @@ p4 <- ggplot(phenotype_analysis_long, aes(x = analysis_type, y = phenotype, fill
   )
 
 # Save plot
-ggsave("heatmap_phenotype_analysis_type.pdf", p4, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25))
+ggsave(file.path(outdir,"heatmap_phenotype_analysis_type.pdf"), p4, width = 10, height = max(8, nrow(phenotype_counts_filtered) * 0.25), limitsize = F)
 
 # ============= 7. Create a combined visualization =============
 
 # Combine plots using patchwork
 combined_plot <- p1 / p3
-ggsave("combined_phenotype_significant_compounds.pdf", combined_plot, width = 12, height = 12)
+ggsave(file.path(outdir,"combined_phenotype_significant_compounds.pdf"), combined_plot, width = 12, height = 12, limitsize = F)
 
 # ============= 8. Create a summary stats table =============
 
@@ -231,7 +226,7 @@ summary_stats <- data.table(
   )
 )
 
-write.csv(summary_stats, "phenotype_significant_compounds_summary.csv", row.names = FALSE)
+outwrite2(summary_stats, "phenotype_significant_compounds_summary.csv")
 
 # Generate an HTML report that shows all visualizations
 html_output <- '<!DOCTYPE html>
