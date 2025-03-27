@@ -48,6 +48,7 @@ standardize_variable <- function(x) {
 
 # Function to process regression results
 create_coefficients_df = function(fit.lm, phen, cmp, anl){
+  browser()
       # Extract coefficients based on model type
       model_type <- class(fit.lm)[1]
       is_clm <- inherits(fit.lm, "clm")
@@ -83,8 +84,10 @@ create_coefficients_df = function(fit.lm, phen, cmp, anl){
         critical_value <- qt(0.975, df.residual(fit.lm))
 
         coefficients_df[, `:=`(
-                multiple_r_squared = summary(fit.lm)$r.squared,
-                adjusted_r_squared = summary(fit.lm)$adj.r.squared
+                deviance_explained := 1 - (fit.lm$deviance / fit.lm$null.deviance)
+                
+                #multiple_r_squared = summary(fit.lm)$r.squared,
+                #adjusted_r_squared = summary(fit.lm)$adj.r.squared
         )]
 
         if(!is.null(rse <- summary(fit.lm)$sigma)) {
@@ -130,10 +133,18 @@ create_coefficients_df = function(fit.lm, phen, cmp, anl){
       return(coefficients_df)
 }
 
+
+#########################################
+# NOTES: Here you run the glm ; maybe better create diff function
+# for each of the lm , lg , clm
+# 
+
 # Define paths
 p.drugs.phenos = 'Resources/result_analysis/cdr_psychAD_IC_microglia_v4.csv'
 p.psychAD = './Resources/psychAD/clinical_metadata.csv'
 p.psychAD.IDmap = '/sc/arion/projects/roussp01a/deepika/merging_psychAD_SNParray_WGS/common_variants_psychAD/ancestry_pca_psychAD_1429_samples/psychAD_20PC_3_methods_ancestry.tsv'
+
+outdir = paste0(getwd(), '/results/assoc_anal/v1')
 
 # Variables with which we will associate
 association.vars = c(
@@ -185,6 +196,10 @@ for(var in c(neuro_vars, psych_vars)) {
 
 message(paste("After filtering neuropsych conditions:", nrow(df.merged), "individuals remain"))
 
+# Get rid of '-' to avoid errors
+colnames(df.merged) = gsub('-', '_', colnames(df.merged))
+psychAD_cols = gsub('-', '_', colnames(psychAD))
+
 # Identify variable sets for analysis
 phenotype_variables <- intersect(names(df.merged), psychAD_cols)
 phenotype_variables <- setdiff(phenotype_variables, c(neuro_vars, psych_vars, "Sex", "Ethnicity", "ind_ID", "ind_ID_clin"))
@@ -215,39 +230,46 @@ message("Creating combination grid for drug-phenotype pairs...")
 combo_grid <- CJ(compound = drug_columns, phenotype = phenotype_variables, sorted = FALSE) # CJ creates data.table with all combinations of provided vectors
 combo_grid[, analysis := var_to_analysis[phenotype]]
 
-# Scale numeric variables for analysis
-message("Scaling variables for analysis...")
-for(col in c(drug_columns, phenotype_variables, pc_columns, "Age")) {
-  if(col != "Sex" && is.numeric(df.merged[[col]])) {
-    df.merged[, (col) := standardize_variable(get(col))]
-  }
-}
 
 # Create age squared column
 df.merged[, age_sq := df.merged$Age^2]
 
+# Scale numeric variables for analysis
+message("Scaling variables for analysis...")
+# Always scale drug_columns, pc_columns, and Age
+always_scale <- c(drug_columns, pc_columns, "Age", "age_sq")
+# Only scale phenotype variables getting linear regression
+linear_phenos <- names(var_to_analysis[var_to_analysis == "linear"])
+scale_cols <- c(always_scale, linear_phenos)
+numeric_cols <- scale_cols[scale_cols != "Sex" & 
+                           sapply(df.merged[, ..scale_cols], is.numeric)]
+df.merged[, (numeric_cols) := lapply(.SD, scale), .SDcols = numeric_cols]
+
+
+
 # Create directory for results if it doesn't exist
-if(!dir.exists("results")) {
-  dir.create("results")
+if(!dir.exists(outdir)) {
+  dir.create(outdir)
 }
-
-
 
 # Perform association analysis
 message("Running associations...")
-results <- rbindlist(pbmclapply(1:nrow(combo_grid), function(i) {
+
+#results <- rbindlist(pbmclapply(1:nrow(combo_grid), function(i) {
+results <- rbindlist(lapply(1:nrow(combo_grid), function(i) {
   thisrow <- combo_grid[i]
   cmp <- thisrow$compound
   phen <- thisrow$phenotype
   anl <- thisrow$analysis
-  
+  message(i)
   # Prepare data and formula
   model_vars <- c(cmp, phen, pc_columns, "Age", "age_sq", "Sex")
   temp <- na.omit(df.merged[, ..model_vars])
+  
+  if(i == 2)browser()
   if(nrow(temp) <= length(model_vars) + 5) return(NULL)
   
   formula_str <- paste(phen, "~", cmp, "+", paste(c(pc_columns, "Age", "age_sq", "Sex"), collapse = " + "))
-  
   # Run model based on analysis type
   if(anl == "linear") {
     fit.lm <- glm(as.formula(formula_str), data = temp, family = gaussian())
@@ -267,8 +289,8 @@ results <- rbindlist(pbmclapply(1:nrow(combo_grid), function(i) {
   }
   
   return(NULL)
-}, mc.cores = detectCores() - 2), fill = TRUE)
-
+}))
+#}, mc.cores = detectCores() - 2), fill = TRUE)
 
 
 # Clean up results
