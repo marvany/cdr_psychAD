@@ -175,3 +175,7 @@ exclude.based.on.vars = c(
 # Variables for initiall filtering
 all.vars = c(general, association.vars, exclude.based.on.vars)
 
+###################
+# MUNGE CDR RESULTS (attention you are munging the aggregated results from the jupyter notebooks part)
+# LOAD MERGED DATAFRAME (contains combined psychAD and CDR results; created in Jupyter Notebook)
+df.merged = fread(p.drugs.phenos) # everything will be sourced from here
