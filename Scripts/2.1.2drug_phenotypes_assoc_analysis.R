@@ -14,6 +14,24 @@
       source(p.stat_PseudoR2)
       setwd("/sc/arion/projects/va-biobank/PROJECTS/ma_cdr_psychAD")
 
+ins <- function(dt, spec_value = NULL){
+  to_return = data.table(
+    variable = names(dt),
+    class = sapply(dt, class),
+    n_unique = sapply(dt, uniqueN),
+    no_NA = sapply(dt, function(x) sum(is.na(x))),
+    no_emptyChar = sapply(dt, function(x) sum(x %in% ''))
+  )
+  if(!is.null(spec_value)) cbind(to_return, data.table(no_spec_value = sapply(dt, function(x) sum(x %in% spec_value))))
+  to_return
+}
+rm.var <- function(thisdt, these){
+  thisdt[!(variable %in% these),]
+}
+
+
+print.a <- function(thisdt) print(thisdt, nrows = Inf)
+
 
       create_coeffiecients_df = function(fit, fit.lm, phen, cmp, anl){
         
@@ -116,6 +134,9 @@
 }
 
 
+    # =========================================== #
+    #     PART 1: Process PsychAD Phenotypes      #
+    # =========================================== #
 
 ##############
 # DEFINE PATHS
@@ -130,7 +151,107 @@ p.psychAD.IDmap = '/sc/arion/projects/roussp01a/deepika/merging_psychAD_SNParray
 
 # We will examine which columns that correspond to phenotypes need to be filtered out
 # Confirm that all phenotypes are present
-psychAD = fread(p.psychAD)
+dt = fread(p.psychAD)
+dt = dt[Ethnicity == 'EUR']
+i.dt = ins(dt)
+print(i.dt, nrows = Inf)
+i.dt[, no_emptyChar := NULL]
+
+print(i.dt, nrows = Inf)
+# REMOVE PRS
+crm = grep('prs_', i.dt[, variable], value = TRUE)
+i.dt = rm.var(i.dt, crm)
+print(i.dt, nrows = Inf)
+
+# REMOVE ROWS WITH SEXUAL ANEUPLOIDY
+rrm = which(dt[, Sex_chr_aneuploidy])j
+dt <- dt[!rrm,]
+print(i.dt, nrows = Inf)
+
+# spec_keep are variables that may proveuseful in the future but shouldn't be analayzed
+spec_keep = c('SubID', 'Dx')
+
+# REMOVE HIGH-DIMENTIONAL CHARACTER COLS - KEEP Dx, SubID - 
+crm = c(crm, i.dt[class == 'character' & n_unique > 10, variable])
+crm = setdiff(crm, spec_keep)
+i.dt = rm.var(i.dt, crm)
+print(i.dt, nrows = Inf)
+
+# REMOVE HIGH NAs
+crm = c(crm, i.dt[no_NA > 400, variable])
+i.dt = rm.var(i.dt, crm)
+print(i.dt, nrows = Inf)
+
+# MANUAL REMOVAL
+crm = c(crm, c('Brain_bank', 'Source_Location', 'Death_Season')) # remove character columns that will increase dimentions for no good reason
+i.dt = rm.var(i.dt, crm)
+print.a(i.dt)
+
+# FIRST FILTER VARIABLES 
+dt.fil = dt[, i.dt[, variable], with = FALSE]
+
+dt.fil[, Ethnicity := NULL] # HARD-CODED removal of Ethnicity; BEWARE!
+
+
+# ENCODE FACTORS
+char_cols = names(which(sapply(dt.fil, is.character)))
+char_cols # pick characters to factor
+to_factor = c('Sex', 'ApoE_gt')
+#dt.fil[, (to_factor) := lapply(.SD, as.factor), .SDcols = to_factor]
+dt.fil[ , (to_factor) := lapply(.SD, function(x) addNA(as.factor(x))), .SDcols = to_factor] # addNA protects dimentions
+
+#dt.fil = cbind(dt.fil, as.data.table(model.matrix(~ ApoE_gt - 1, data = dt.fil)))
+form <- reformulate(to_factor, intercept = FALSE)  # ~ Sex + ApoE_gt -1
+dums <- as.data.table(model.matrix(form, data = dt.fil, na.action = na.pass))
+dt.fil[, (names(dums)) := dums]
+
+# FIND near-0 variance
+print.a(ins(dt.fill))
+num_cols <- names(which(sapply(dt.fil, is.numeric)))
+i.dt2 <- data.table(
+  variable = num_cols,
+  variance = vapply(
+    dt.fil[, ..num_cols],
+    stats::var,                 # fully qualified
+    numeric(1L),                # expected length-1 numeric result
+    na.rm = TRUE
+  )
+)
+
+i.dt2[, above_thresh := (variance > 0.01)]
+print.a(i.dt2)
+i.dt2 = i.dt2[above_thresh == TRUE, .(variable, variance)]
+print.a(i.dt2)
+
+# MANUAL REMOVE
+i.dt2 <- rm.var(i.dt2, c('ApoE_gtNA', 'Ethnicity'))
+print.a(i.dt2)
+
+# SECOND FILTERING
+to_keep = c(setdiff(char_cols, to_factor), i.dt2[, variable]) # factorized are now part of the matrix as numeric
+dt.fil2 = dt.fil[, ..to_keep]
+dim(dt.fil2)
+length(to_keep)
+
+fwrite(dt.fil2, 'Resources/psychAD/postProcess_clinical_metadata.csv')
+
+
+    # ========================= #
+    #     PART 2: Run Analys    #
+    # ========================= #             
+
+dt = fread('Resources/psychAD/postProcess_clinical_metadata.csv')
+ins(dt)
+
+
+insp_psychAD <- ins(psychAD)
+print(insp_psychAD, nrows = Inf)
+keep_those = c()
+
+
+insp_psychAD[class == 'character']
+psychAD[, unique(Ethnicity)]
+to_remove = insp_psychAD[n_unique < 30, variable]
 
 # We keep only numeric, logical and columns 'ApoE_gt', 'Sex', 'Ethnicity'
 numeric_or_logical = sapply(psychAD, function(x) (is.numeric(x) | is.logical(x)))
@@ -157,7 +278,22 @@ if(FALSE){
 
 # LOAD MERGED DATAFRAME (contains combined psychAD and CDR results; created in Jupyter Notebook)
 df.merged = fread(p.drugs.phenos) # everything will be sourced from here
+ins(df.merged[, setdiff(names(df.merged), names(dt)), with = FALSE])
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+################### OLD VERSION BELOW
 # Reshape columns that need reshaping (see above)
 df.merged[,'ApoE_gt'] = as.numeric(df.merged[['ApoE_gt']])
 df.merged[,'Sex'] = ifelse(df.merged[['Sex']] == 'Male', TRUE, FALSE)

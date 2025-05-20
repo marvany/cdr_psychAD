@@ -50,7 +50,7 @@ function(fit, adjust=NULL, adjustAll=FALSE, showWarnings=TRUE, ...){
 	# variance on linear scale
 	# get variance of each term
 	# append with variance due to link function
-	var_term = c(apply(Eta, 2, var), distVar)
+	var_term = c(apply(Eta, 2, stats::var), distVar)
 
 	# compute fraction
 	varFrac_linear = var_term / sum( var_term )

@@ -8,7 +8,7 @@ library(pbmcapply)
 # Source necessary scripts
 source('/sc/arion/projects/va-biobank/PROJECTS/ma_cdr_psychAD/Scripts/clinical_variables.R')
 source("/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/accessoryScripts.R")
-p.stat_calcVarPart = "/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/stat_calcVarPart.R"
+p.stat_calcVarPart = "/sc/arion/projects/va-biobank/PROJECTS/ma_cdr_psychAD/Scripts/stat_calcVarPart.R"
 p.stat_PseudoR2 = "/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/stat_PseudoR2.R"
 source(p.stat_calcVarPart)
 source(p.stat_PseudoR2)
@@ -48,7 +48,7 @@ standardize_variable <- function(x) {
 
 # Function to process regression results
 create_coefficients_df = function(fit.lm, phen, cmp, anl){
-  browser()
+  
       # Extract coefficients based on model type
       model_type <- class(fit.lm)[1]
       is_clm <- inherits(fit.lm, "clm")
@@ -56,21 +56,47 @@ create_coefficients_df = function(fit.lm, phen, cmp, anl){
       # Extract coefficients with appropriate method
       coef_summary <- summary(fit.lm)$coefficients
       
+
+      compound_coef <- coef_summary[grepl(cmp, rownames(coef_summary)), , drop = FALSE]
+      p_col_value <- if(anl %in% c('ordinal', 'logistic')) c("Pr(>|z|)", "z value") else c("Pr(>|t|)", "t value")
+      setnames(compound_coef, c(p_col_value[1], p_col_value[2]), 'p')
+      
       # Process differently based on model type
       if(is_clm) {
-        compound_coef <- coef_summary[grepl(cmp, rownames(coef_summary)), , drop = FALSE]
         coefficients_df <- data.table(
               compound = cmp, phenotype = phen, analysis = anl,
               Estimate = compound_coef[1, "Estimate"],
               `Std. Error` = compound_coef[1, "Std. Error"],
               `z value` = compound_coef[1, "z value"],
-              `Pr(>|z|)` = compound_coef[1, "Pr(>|z|)"]
+              `Pr(>|z|)` = compound_coef[1, "p"]
         )
         
         # Add CI values and p-value adjustments
         critical_value <- 1.96 # Z distribution
         p_col <- "Pr(>|z|)"
       } else {
+
+if (fit.lm$family$family == "binomial") {
+
+        # Logistic regression
+        coefficients_df <- data.table(
+            compound = cmp, phenotype = phen, analysis = anl,
+            Estimate = compound_coef[1, "Estimate"],
+            `Std. Error` = compound_coef[1, "Std. Error"],
+            `z value` = compound_coef[1, "z value"],
+            `Pr(>|z|)` = compound_coef[1, "p"]
+        )
+    } else if (fit.lm$family$family == "gaussian") {
+        # Gaussian GLM
+        coefficients_df <- data.table(
+            compound = cmp, phenotype = phen, analysis = anl,
+            Estimate = compound_coef[1, "Estimate"],
+            `Std. Error` = compound_coef[1, "Std. Error"],
+            `t value` = compound_coef[1, "t value"],
+            `Pr(>|t|)` = compound_coef[1, "p"]
+        )
+
+
         # Regular glm/lm models
         coef_summary <- coef_summary[-1, , drop=FALSE]
         coefficients_df <- data.table(t(as.data.frame(coef_summary)))
@@ -80,12 +106,12 @@ create_coefficients_df = function(fit.lm, phen, cmp, anl){
         coefficients_df[, `:=`(phenotype = phen, compound = cmp, analysis = anl)]
         
         # Set analysis-specific values
-        p_col <- if(anl == 'logistic') "Pr(>|z|)" else "Pr(>|t|)"
         critical_value <- qt(0.975, df.residual(fit.lm))
-
+        browser()
         coefficients_df[, `:=`(
-                deviance_explained := 1 - (fit.lm$deviance / fit.lm$null.deviance)
-                
+                glm.deviance = fit.lm$deviance,
+                null_deviance = fit.lm$null.deviance,
+                deviance_explained = 1 - (fit.lm$deviance / fit.lm$null.deviance)
                 #multiple_r_squared = summary(fit.lm)$r.squared,
                 #adjusted_r_squared = summary(fit.lm)$adj.r.squared
         )]
@@ -93,13 +119,6 @@ create_coefficients_df = function(fit.lm, phen, cmp, anl){
         if(!is.null(rse <- summary(fit.lm)$sigma)) {
               coefficients_df[, deviance := rse^2 * df.residual(fit.lm)]
             }
-            
-        if(inherits(fit.lm, "glm")) {
-          coefficients_df[, `:=`(
-                glm.deviance = fit.lm$deviance,
-                null_deviance = fit.lm$null.deviance
-          )]
-        }
         
         # Add residual statistics for non-clm models
         deviance_residuals <- residuals(fit.lm, type = "deviance")
@@ -131,13 +150,14 @@ create_coefficients_df = function(fit.lm, phen, cmp, anl){
       )]
       
       return(coefficients_df)
+  }
 }
-
 
 #########################################
 # NOTES: Here you run the glm ; maybe better create diff function
-# for each of the lm , lg , clm
-# 
+# for each of the lm , lg , clm . Make sure to add the adjusted r-squared
+# make sure to add the nagelkerke stuff etc + (check original)
+# review the summary analysis
 
 # Define paths
 p.drugs.phenos = 'Resources/result_analysis/cdr_psychAD_IC_microglia_v4.csv'
@@ -173,9 +193,9 @@ df.merged <- fread(p.drugs.phenos)
 psychAD <- fread(p.psychAD)
 
 # Convert necessary columns
-df.merged[, ApoE_gt := as.numeric(ApoE_gt)]
+df.merged[, ApoE_gt := as.numeric(ApoE_gt)]   
 df.merged[, Sex := ifelse(Sex == 'Male', 1, 0)]
-df.merged[, Ethnicity := NULL]
+df.merged[, Ethnicity := NULL]                  # ma: recreate the data without EUR filtering and take this into consideration
 
 # Load PCs data for covariates
 pcs_data <- fread(p.psychAD.IDmap)
@@ -193,6 +213,14 @@ for(var in c(neuro_vars, psych_vars)) {
     df.merged <- df.merged[get(var) == 0 | is.na(get(var))]
   }
 }
+
+# Filter data frame based on neuroscience and psychology variables
+df.merged <- df.merged[rowSums(sapply(c(neuro_vars, psych_vars), function(var) {
+  if(var %in% names(df.merged)) {
+    return(df.merged[[var]] != 0 & !is.na(df.merged[[var]]))
+  }
+  return(FALSE)
+})) == 0, ]
 
 message(paste("After filtering neuropsych conditions:", nrow(df.merged), "individuals remain"))
 
@@ -223,6 +251,9 @@ analysis_summary <- data.table(
   phenotype = names(var_to_analysis),
   analysis_type = unname(var_to_analysis)
 )
+
+fwrite(analysis_summary, '/sc/arion/projects/va-biobank/PROJECTS/ma_cdr_psychAD/Resources/all_analysis/analysis_summary.csv')
+
 print(analysis_summary)
 
 # Create combo grid for drug-phenotype pairs
