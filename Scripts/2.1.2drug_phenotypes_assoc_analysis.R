@@ -1,138 +1,4 @@
-# Environment
-{
-      library(data.table)
-      library(ordinal)
-      library(MASS)
-      library(parallel)
-
-      source("/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/acc_lsf_bash_RFunctions.R")
-      source("/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/acc_resubmit_general.R")
-      source("/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/accessoryScripts.R")
-      p.stat_calcVarPart = "/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/stat_calcVarPart.R"
-      p.stat_PseudoR2 = "/sc/arion/projects/va-biobank/PROJECTS/ma_neurocog_grex/Scripts/GReX_to_pheno/stat_PseudoR2.R"
-      source(p.stat_calcVarPart)
-      source(p.stat_PseudoR2)
-      setwd("/sc/arion/projects/va-biobank/PROJECTS/ma_cdr_psychAD")
-
-ins <- function(dt, spec_value = NULL){
-  to_return = data.table(
-    variable = names(dt),
-    class = sapply(dt, class),
-    n_unique = sapply(dt, uniqueN),
-    no_NA = sapply(dt, function(x) sum(is.na(x))),
-    no_emptyChar = sapply(dt, function(x) sum(x %in% ''))
-  )
-  if(!is.null(spec_value)) cbind(to_return, data.table(no_spec_value = sapply(dt, function(x) sum(x %in% spec_value))))
-  to_return
-}
-rm.var <- function(thisdt, these){
-  thisdt[!(variable %in% these),]
-}
-
-
-print.a <- function(thisdt) print(thisdt, nrows = Inf)
-
-
-      create_coeffiecients_df = function(fit, fit.lm, phen, cmp, anl){
-        
-            coefs <- coef(summary(fit.lm))[-1,]
-
-            coefs = as.data.frame(coef(summary(fit.lm))[-1, ])
-            temp2 = transpose(coefs)
-            colnames(temp2) = rownames(coefs)
-            coefficients_df = temp2
-
-              coefficients_df$phenotype = phen
-              coefficients_df$compound = cmp
-              
-              #coefficients_df$model_ID= basename(outdir) # edit
-              if(anl == 'logistic'){
-                coefficients_df = coefficients_df[, c("compound","phenotype", "Estimate", "Std. Error", "z value", "Pr(>|z|)")]
-              } else coefficients_df = coefficients_df[, c("compound","phenotype", "Estimate", "Std. Error", "t value", "Pr(>|t|)")]
-              
-              # Extract coefficients and standard errors
-              coeff_summary <- coef(summary(fit.lm))
-              estimates <- coeff_summary[-1, "Estimate"]
-              std_errors <- coeff_summary[-1, "Std. Error"]
-
-              # Calculate the critical t-value for 95% confidence intervals
-              # Degrees of freedom = residual degrees of freedom from the model
-              t_value <- qt(0.975, df.residual(fit.lm))
-
-              # Lower and upper bounds of the confidence intervals
-              coefficients_df$conf_int_low <- estimates - t_value * std_errors
-              coefficients_df$conf_int_high <- estimates + t_value * std_errors
-
-              # Extract adjusted p-values
-              if(anl == 'logistic'){
-                    coefficients_df$fdr.adjusted = p.adjust(coefficients_df$`Pr(>|z|)`, method = "fdr")
-                    coefficients_df$bonferroni.adjusted = p.adjust(coefficients_df$`Pr(>|z|)`, method = "bonferroni")
-                    coefficients_df$BH.adjusted = p.adjust(coefficients_df$`Pr(>|z|)`, method = "BH")
-              } else{
-                  coefficients_df$fdr.adjusted = p.adjust(coefficients_df$`Pr(>|t|)`, method = "fdr")
-                  coefficients_df$bonferroni.adjusted = p.adjust(coefficients_df$`Pr(>|t|)`, method = "bonferroni")
-                  coefficients_df$BH.adjusted = p.adjust(coefficients_df$`Pr(>|t|)`, method = "BH")
-              }
-              
-
-              # Extract multiple R-squared
-              coefficients_df$multiple_r_squared <- summary(fit.lm)$r.squared
-
-              # Extract adjusted R-squared
-              coefficients_df$adjusted_r_squared <- summary(fit.lm)$adj.r.squared
-
-              # Extract Residual Deviance
-              rse = summary(fit.lm)$sigma
-              freedom_degrees = df.residual(fit.lm) # degrees of freedom
-              if(!is.null(rse)) coefficients_df$deviance = rse^2 * freedom_degrees
-              coefficients_df$glm.deviance = fit$deviance
-
-              # Extract Null Deviance
-              coefficients_df$null_deviance <- fit$null.deviance
-
-              # Extract AIC
-              coefficients_df$AIC <- AIC(fit.lm)
-
-              # Extract residual standard error summary
-              deviance_residuals = residuals(fit.lm, type = "deviance")
-              coefficients_df$min_residual_se = min(deviance_residuals) 
-              coefficients_df$first_q_residual_se = quantile(deviance_residuals, 0.25)
-              coefficients_df$median_residual_se = median(deviance_residuals)
-              coefficients_df$mean_residual_se = mean(deviance_residuals)  
-              coefficients_df$third_q_residual_se =quantile(deviance_residuals, 0.75)
-              coefficients_df$max_residual_se = max(deviance_residuals)
-
-              # Calculate variance partitioning
-              if(anl == 'linear') var_part = calcVarPart(fit) else var_part = calcVarPart(fit.lm)
-              coefficients_df$varPart <- var_part[1]
-              coefficients_df$residuals <- var_part[2]
-
-              return(coefficients_df)
-      }
-
-      make_names <- function(x) {
-        x <- gsub("\\+", ".plus.", x)
-        x <- gsub("-", ".minus.", x)
-        x <- make.names(x)
-        return(x)
-      }
-
-      WriteProperTSV <- function(object, file.path) {
-        write.table(object, file = file.path,
-                    quote = FALSE, sep = '\t', row.names = FALSE) }
-
-      ## parse argument (parse_NA_T_F_list)
-      parse_NA_T_F_list <- function(x) {
-        x <- strsplit(x,",")[[1]]
-        if (length(x) == 1) {
-          if (x %in% c("NA", "TRUE", "T", "FALSE", "F")) {
-            x <- eval(parse(text = x))
-          }
-        }
-        return(x)
-      }
-}
-
+source("/sc/arion/projects/va-biobank/PROJECTS/ma_cdr_psychAD/Scripts/2.1.3_assoc_an_helper.R")
 
     # =========================================== #
     #     PART 1: Process PsychAD Phenotypes      #
@@ -141,7 +7,6 @@ print.a <- function(thisdt) print(thisdt, nrows = Inf)
 ##############
 # DEFINE PATHS
 #p.drugs.phenos = 'Resources/result_analysis/test_merged_drugs_phenotypes.csv'
-p.drugs.phenos = 'Resources/result_analysis/cdr_psychAD_IC_microglia_v4.csv'
 p.psychAD = './Resources/psychAD/clinical_metadata.csv'
 p.psychAD.IDmap = '/sc/arion/projects/roussp01a/deepika/merging_psychAD_SNParray_WGS/common_variants_psychAD/ancestry_pca_psychAD_1429_samples/psychAD_20PC_3_methods_ancestry.tsv'
 
@@ -236,13 +101,145 @@ length(to_keep)
 fwrite(dt.fil2, 'Resources/psychAD/postProcess_clinical_metadata.csv')
 
 
-    # ========================= #
-    #     PART 2: Run Analys    #
-    # ========================= #             
+    # =========================== #
+    #     PART 2: Run Analysis    #
+    # =========================== #             
 
-dt = fread('Resources/psychAD/postProcess_clinical_metadata.csv')
-ins(dt)
+# ------------------------ Create the table of drugs (dt.drugs) ; contains CDR-results + ID columns 
 
+# We first load the merged.dt (contains combined psychAD and CDR results; created in Jupyter Notebook)
+# We will filter out the columns that were added in the ipynb file
+library(data.table)
+library(pbmcapply)
+p.drugs.phenos = 'Resources/result_analysis/cdr_psychAD_IC_microglia_v4.csv'
+p.phenos = './Resources/psychAD/clinical_metadata.csv' # this is the original ipynb file used
+
+dt.merged = fread(p.drugs.phenos) # everything will be sourced from here
+dt.phenos = fread(p.phenos) # original raw phenotypes file
+
+all.pheno.cols = names(dt.phenos)
+all.merged.cols = names(dt.merged)
+
+to_remove = intersect(all.merged.cols, all.pheno.cols) # we want to keep the ID columns
+setdiff(all.pheno.cols, to_remove) # only SubID won't be removed, because it doesn't exist, but that's ok; you already have ID cols in merged
+
+dt.drugs = copy(dt.merged)
+dt.drugs[, (to_remove) := NULL]
+dt.drugs[, 'ind_ID' := NULL]
+
+length(names(dt.merged))
+length(names(dt.phenos)) + length(names(dt.drugs)) # makes sense one extra variable for column SubID
+
+# ------------------------ Prepare revised.phenos with matching ID
+# Revised phenotypes
+dt.revised.phenos = fread('Resources/psychAD/postProcess_clinical_metadata.csv') # Is the data created above
+
+setnames(dt.revised.phenos, 'SubID', 'ind_ID_clin')
+f.dt = dt.drugs[dt.revised.phenos, on = .(ind_ID_clin), nomatch = 0]
+i.dt = ins(f.dt)
+unique(i.dt$n_unique)
+
+# We will iterate over the phenotypes and create tables
+revised.pheno.names = setdiff(names(dt.revised.phenos), c('ind_ID_clin', 'Dx'))
+
+to_analyze.list = pbmclapply(
+  revised.pheno.names,
+  mc.cores = parallel::detectCores() - 2,
+  function(x){
+    na.omit(f.dt[, c('ind_ID_clin', 'Dx', x), with = FALSE])
+})
+
+names(to_analyze.list) = revised.pheno.names
+str(to_analyze.list[1])
+
+# Determine what analysis will be run for each variable
+model_type_vec <- pbmclapply(
+  to_analyze.list,
+  determine_analysis,
+  mc.cores = parallel::detectCores() - 2
+)
+model_type_vec <- unlist(model_type_vec, use.names = TRUE)
+
+# ------------------------ Prepare revised.phenos with matching ID
+# Run the full analysis for each given phenotype
+
+results_by_pheno <- pbmclapply(
+  names(to_analyze.list),
+  mc.cores = parallel::detectCores() - 2,
+  run_association_analysis
+)
+
+final_dt <- rbindlist(results_by_pheno, use.names = TRUE, fill = TRUE)
+fwrite(final_dt, "results/drug_vs_phenotype_coeffs.tsv", sep = "\t")
+
+long_dt[sample(.N, 10)]
+# Iterate over to_analyze.list with lapply
+# merge each data.table of said list with the dt.drugs table  based on matching values in the ind_ID_clin
+# extract for given data.table the responding type of analysis from the model_type_vec variable
+# execute a separate linear/logistic regression for all of the table columns with the outcome variable of the 'given data.table' (the one that determined the type of anlaysis)
+# here is the code for linear/logistic regression you should use, in conjunction with some additional code (as you can see anl is the varialbe that determines what will be executed)
+ if (anl == "linear") {
+              # Linear Regression
+              fit.lm <- lm(phen ~ cmp, data = temp) 
+              fit <- glm(phen ~ cmp, data = temp, family=gaussian(link = "identity")) 
+              dt = create_coeffiecients_df(fit = fit, fit.lm = fit.lm, phen = phen, cmp = cmp, anl = anl)
+              dt$n_phen = nrow(temp)
+              dt$analysis = anl 
+              message('the table produced has row_col dimentions ', paste(dim(dt), collapse = ' '))
+              return(dt)
+
+          }else if(anl == "logistic"){
+
+              # Ensure phen is a binary variable (as a factor)
+              temp$phen <- as.factor(temp$phen)
+              fit.lm <- glm(phen ~ cmp, data = temp, family = binomial) 
+              dt = create_coeffiecients_df(fit = fit.lm, fit.lm = fit.lm, phen = phen, cmp = cmp, anl = anl)
+              dt$n_phen = nrow(temp) 
+              dt$analysis = anl
+              message('the table produced has row_col dimentions ', paste(dim(dt), collapse = ' '))
+              return(dt)
+          }
+# (create_coefficients_df is a custom made function, that you don't need to know anything about, just call it as instructed)
+
+
+
+dt.drugs
+head(dt.drugs[,1:5])
+
+# TODO:
+# Iterate over both lists ; and run linear or logistic regression (revise previously made functions). Ordinal can be skipped for now
+# function create_coeffiecients_df() is the one needed to analyze
+
+
+# CODE TO USE FOR ANALYSIS:
+if(nrow(temp) > 1){
+            if (anl == "linear") {
+              # Linear Regression
+              fit.lm <- lm(phen ~ cmp, data = temp) 
+              fit <- glm(phen ~ cmp, data = temp, family=gaussian(link = "identity")) 
+              dt = create_coeffiecients_df(fit = fit, fit.lm = fit.lm, phen = phen, cmp = cmp, anl = anl)
+              dt$n_phen = nrow(temp)
+              dt$analysis = anl 
+              message('the table produced has row_col dimentions ', paste(dim(dt), collapse = ' '))
+              return(dt)
+
+          }else if(anl == "logistic"){
+
+              # Ensure phen is a binary variable (as a factor)
+              temp$phen <- as.factor(temp$phen)
+              fit.lm <- glm(phen ~ cmp, data = temp, family = binomial) 
+              dt = create_coeffiecients_df(fit = fit.lm, fit.lm = fit.lm, phen = phen, cmp = cmp, anl = anl)
+              dt$n_phen = nrow(temp) 
+              dt$analysis = anl
+              message('the table produced has row_col dimentions ', paste(dim(dt), collapse = ' '))
+              return(dt)
+          }
+    }
+
+
+
+###############################################################3
+#   OLD
 
 insp_psychAD <- ins(psychAD)
 print(insp_psychAD, nrows = Inf)
